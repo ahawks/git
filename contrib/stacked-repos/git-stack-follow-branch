@@ -1,0 +1,39 @@
+#!/bin/bash
+
+function usage {
+   echo "Creates a tag associating the target branch with a source branch."
+   echo "Used by git make-consistent to automatically rebase so that the target"
+   echo "branch always rebases off of the source branch."
+   echo ""
+   echo "Useful if you have stacked branches and add a change to a branch near"
+   echo "the bottom of the stack."
+   echo ""
+   echo ""
+   echo "git follow-branch <target branch> <source branch>"
+   echo ""
+   echo "ex: git follow-branch master mybranch"
+   exit 1
+}
+
+targetBranch="$1"
+sourceBranch="$2"
+
+if [ -z "$targetBranch" ]; then usage; fi
+if [ -z "$sourceBranch" ]; then usage; fi
+
+
+echo "Finding last rev..."
+lastRev=$(git rev-list HEAD|tail -n 1)
+
+if [ -z "$lastRev" ]; then
+   echo "Could not find last rev.  Empty string!"
+   exit 1
+fi
+
+echo "Last Rev: $lastRev"
+
+newTag="FOLLOW-${targetBranch}-follows-${sourceBranch}"
+
+echo "git tag $newTag $lastRev"
+
+git tag "$newTag" "$lastRev"

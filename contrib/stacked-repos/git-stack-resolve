@@ -1,0 +1,194 @@
+#!/usr/bin/env python
+
+import os
+import sys
+
+def run(program, *args, **kwargs):
+    import os
+    from subprocess import Popen, PIPE
+ 
+    null=open(os.devnull, 'r')  # Use this to close stdin 
+    pipe = Popen([program] + list(args), 
+                 stdout=PIPE, stderr=PIPE, stdin=null, 
+                 close_fds=False, shell=True, **kwargs) 
+    (sout, serr) = pipe.communicate() 
+    rc = pipe.wait() 
+    if (rc != 0): 
+        print "RC: ", rc 
+        print "Sout: ", sout 
+        print "Serr: ", serr 
+    return {'rc' : rc, 
+            'sout': sout, 
+            'serr': serr} 
+
+ 
+def sortGraph(graph_unsorted):
+    """ Snagged from http://blog.jupo.org/2012/04/06/topological-sorting-acyclic-directed-graphs/ """
+    # This is the list we'll return, that stores each node/edges pair
+    # in topological order.
+    graph_sorted = []
+
+    # Convert the unsorted graph into a hash table. This gives us
+    # constant-time lookup for checking if edges are unresolved, and
+    # for removing nodes from the unsorted graph.
+    graph_unsorted = dict(graph_unsorted)
+
+    # Run until the unsorted graph is empty.
+    while graph_unsorted:
+
+        # Go through each of the node/edges pairs in the unsorted
+        # graph. If a set of edges doesn't contain any nodes that
+        # haven't been resolved, that is, that are still in the
+        # unsorted graph, remove the pair from the unsorted graph,
+        # and append it to the sorted graph. Note here that by using
+        # using the items() method for iterating, a copy of the
+        # unsorted graph is used, allowing us to modify the unsorted
+        # graph as we move through it. We also keep a flag for
+        # checking that that graph is acyclic, which is true if any
+        # nodes are resolved during each pass through the graph. If
+        # not, we need to bail out as the graph therefore can't be
+        # sorted.
+        acyclic = False
+        for node, edges in graph_unsorted.items():
+            for edge in edges:
+                if edge in graph_unsorted:
+                    break
+            else:
+                acyclic = True
+                del graph_unsorted[node]
+                graph_sorted.append((node, edges))
+
+        if not acyclic:
+            # Uh oh, we've passed through all the unsorted nodes and
+            # weren't able to resolve any of them, which means there
+            # are nodes with cyclic edges that will never be resolved,
+            # so we bail out with an error.
+            raise RuntimeError("A cyclic dependency occurred")
+
+    return graph_sorted
+
+
+def GetTags():
+    # Get list of all relevant tags
+    ret = run('git tag -l FOLLOW-*')
+    if ret['rc'] != 0:
+        print "Error looking up tags..."
+        sys.exit(1)
+
+    tags = [x for x in ret['sout'].split('\n') if x != ""]
+
+    if len(tags) == 0:
+        print "No related tags.  Use git-follow-branch to create appropriate tags."
+        sys.exit(0)
+
+    return tags
+
+
+def ParseTagsForDependencies(tags):
+    # Build dep tree and make sure there are no cycles.  Must ALWAYS be a DAG
+    deps = []
+    for tag in tags:
+        # Parse out the dependencies
+        a1 = tag.split('FOLLOW-')
+        a2 = a1[1].split('-follows-')
+        dep = (a2[0], a2[1])
+        deps.append(dep)
+    
+    return deps
+
+
+def FindBranchesThatRequireRebasing(sortedDeps):
+    needsRebase = []
+    for deps in sortedDeps:
+        target = deps[0]
+        source = deps[1]
+
+        # Find out if we need to rebase
+        ret = run('git rev-list %s..%s' % (target, source))
+        if ret['rc'] != 0:
+            print "git rev-list failed for range %s..%s" % (target, source)
+            sys.exit(1)
+        revs = ret['sout'].split('\n')
+
+        if len(revs) <= 1:
+            continue
+    
+        needsRebase.append(target)
+
+    return needsRebase    
+
+
+def ResolveRebaseDependencies(sortedDeps, needsRebase):
+    for dep in sortedDeps:
+        target = dep[0]
+        source = dep[1]
+    
+        # Skip if already marked
+        if target in needsRebase:
+            continue
+    
+        # If our dependency needs rebasing, so do we
+        if source in needsRebase:
+            needsRebase.append(target)
+    
+    return needsRebase
+
+
+
+def main():
+    print "Checking branches for consistency..."
+    
+    tags = GetTags()
+    deps = ParseTagsForDependencies(tags)
+    
+    #print "Deps: ", deps
+    sortedDeps = sortGraph(deps)
+    sortedDeps.reverse() # We want to work from the root to the leaves
+    #print "SortedDeps:", sortedDeps
+    dictDeps = dict(sortedDeps) # Make a dictionary version for easy lookup
+    #print "dictDeps:", dictDeps
+    
+    #XXX: Create an OrderedDict instead
+    
+    print "Scanning for matching revisions..."
+    needsRebase = FindBranchesThatRequireRebasing(sortedDeps)
+    needsRebase = ResolveRebaseDependencies(sortedDeps, needsRebase)
+    
+    print "Branches that require rebasing:"
+    for branch in needsRebase:
+        print branch,
+    
+    print ""
+    
+    if len(needsRebase) == 0:
+        print "Branches are stacked correctly, no rebasing necessary."
+        sys.exit(0)
+    
+    print ""
+    print ""
+    
+    count = 1
+    for branch in needsRebase:
+        print "Performing rebase %s of %s..." % (count, len(needsRebase))
+    
+        source = dictDeps[branch]
+        target = branch
+    
+        print "Changing to branch %s..." % target
+        res = run("git checkout %s" % target)
+        if res['rc'] != 0:
+            print "Failed to change to branch %s..." % target
+            sys.exit(1)
+    
+        print "Rebasing branch %s onto branch %s..." % (target, source)
+        res = run("git rebase %s" % source)
+        if res['rc'] != 0:
+            print "Error returned while rebasing branch %s onto branch %s.  May need to continue with interactive merge, then re-run this command." % (target, source)
+            sys.exit(1)
+    
+        count = count + 1
+        print
+
+
+if __name__ == '__main__':
+    main()
