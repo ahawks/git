@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import collections
 import os
 import sys
 
@@ -97,12 +98,9 @@ def ParseTagsForDependencies(tags):
     return deps
 
 
-def FindBranchesThatRequireRebasing(sortedDeps):
+def FindBranchesThatRequireRebasing(dictDeps):
     needsRebase = []
-    for deps in sortedDeps:
-        target = deps[0]
-        source = deps[1]
-
+    for target, source in dictDeps.items():
         # Find out if we need to rebase
         ret = run('git rev-list %s..%s' % (target, source))
         if ret['rc'] != 0:
@@ -118,11 +116,8 @@ def FindBranchesThatRequireRebasing(sortedDeps):
     return needsRebase    
 
 
-def ResolveRebaseDependencies(sortedDeps, needsRebase):
-    for dep in sortedDeps:
-        target = dep[0]
-        source = dep[1]
-    
+def ResolveRebaseDependencies(dictDeps, needsRebase):
+    for target, source in dictDeps.items():
         # Skip if already marked
         if target in needsRebase:
             continue
@@ -134,25 +129,19 @@ def ResolveRebaseDependencies(sortedDeps, needsRebase):
     return needsRebase
 
 
-
-def main():
+def ResolveStackedBranches():
     print "Checking branches for consistency..."
     
     tags = GetTags()
     deps = ParseTagsForDependencies(tags)
-    
-    #print "Deps: ", deps
+
     sortedDeps = sortGraph(deps)
     sortedDeps.reverse() # We want to work from the root to the leaves
-    #print "SortedDeps:", sortedDeps
-    dictDeps = dict(sortedDeps) # Make a dictionary version for easy lookup
-    #print "dictDeps:", dictDeps
-    
-    #XXX: Create an OrderedDict instead
+    dictDeps = collections.OrderedDict(sortedDeps) # Make a dictionary version for easy lookup
     
     print "Scanning for matching revisions..."
-    needsRebase = FindBranchesThatRequireRebasing(sortedDeps)
-    needsRebase = ResolveRebaseDependencies(sortedDeps, needsRebase)
+    needsRebase = FindBranchesThatRequireRebasing(dictDeps)
+    needsRebase = ResolveRebaseDependencies(dictDeps, needsRebase)
     
     print "Branches that require rebasing:"
     for branch in needsRebase:
@@ -188,6 +177,20 @@ def main():
     
         count = count + 1
         print
+
+
+def FollowBranch():
+    # Set up branch to follow, checking for nonexistence first
+    # Be sure each branch only follows a single other branch
+    # A follows B.  A can only follow a single B, but multiple
+    # different A's can follow the same B
+    pass
+
+def main():
+    pass
+    # Parse arguments and decide what to do
+
+    ResolveStackedBranches()
 
 
 if __name__ == '__main__':
