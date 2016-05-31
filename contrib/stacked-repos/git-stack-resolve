@@ -151,7 +151,7 @@ def ResolveStackedBranches():
     
     if len(needsRebase) == 0:
         print "Branches are stacked correctly, no rebasing necessary."
-        sys.exit(0)
+        return False # No branches need restacking
     
     print ""
     print ""
@@ -178,19 +178,13 @@ def ResolveStackedBranches():
         count = count + 1
         print
 
-
-def FollowBranch():
-    # Set up branch to follow, checking for nonexistence first
-    # Be sure each branch only follows a single other branch
-    # A follows B.  A can only follow a single B, but multiple
-    # different A's can follow the same B
-    pass
+    return True # Stacked branches were resolved
 
 def main():
-    pass
-    # Parse arguments and decide what to do
-
-    ResolveStackedBranches()
+    # Resolve stacked branches and iterate until done
+    count = 0; # Add a hard limit in case we hit a loop of some sort
+    while (ResolveStackedBranches() and count < 25):
+        count = count + 1;
 
 
 if __name__ == '__main__':
