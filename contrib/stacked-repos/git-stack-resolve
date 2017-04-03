@@ -4,6 +4,8 @@ import collections
 import os
 import sys
 
+import depgen
+
 def run(program, *args, **kwargs):
     import os
     from subprocess import Popen, PIPE
@@ -87,13 +89,12 @@ def GetTags():
 
 def ParseTagsForDependencies(tags):
     # Build dep tree and make sure there are no cycles.  Must ALWAYS be a DAG
-    deps = []
+    deps = {}
     for tag in tags:
         # Parse out the dependencies
         a1 = tag.split('FOLLOW-')
         a2 = a1[1].split('-follows-')
-        dep = (a2[0], a2[1])
-        deps.append(dep)
+        deps[a2[0]] = a2[1]
     
     return deps
 
@@ -116,17 +117,31 @@ def FindBranchesThatRequireRebasing(dictDeps):
     return needsRebase    
 
 
-def ResolveRebaseDependencies(dictDeps, needsRebase):
-    for target, source in dictDeps.items():
-        # Skip if already marked
-        if target in needsRebase:
-            continue
+def ResolveHelper(item, revDepsDict, sortedDeps, marked):
+    if item not in sortedDeps:
+        raise Exception('%s not found in sortedDeps list...' % item)
+    idx = sortedDeps.index(item)
+    marked[idx] = 1
+
+    # Get any dependencies of item and recurse
+    dep = revDepsDict.get(item)
+    if dep:
+        ResolveHelper(dep, revDepsDict, sortedDeps, marked)
+
+
+def ResolveRebaseDependencies(revDepsDict, needsRebase, sortedDeps):
+    orderedRebaseList = []
+
+    marked = [0 for dep in sortedDeps]
+
+    for item in needsRebase:
+        ResolveHelper(item, revDepsDict, sortedDeps, marked)
+
+    for idx in range(0, len(marked)):
+        if marked[idx]:
+            orderedRebaseList.append(sortedDeps[idx])
     
-        # If our dependency needs rebasing, so do we
-        if source in needsRebase:
-            needsRebase.append(target)
-    
-    return needsRebase
+    return orderedRebaseList
 
 
 def ResolveStackedBranches():
@@ -134,14 +149,15 @@ def ResolveStackedBranches():
     
     tags = GetTags()
     deps = ParseTagsForDependencies(tags)
+    revdeps = {v: k for k, v in deps.items()}
 
-    sortedDeps = sortGraph(deps)
-    sortedDeps.reverse() # We want to work from the root to the leaves
-    dictDeps = collections.OrderedDict(sortedDeps) # Make a dictionary version for easy lookup
-    
+    sortedDeps = depgen.flatten(deps)
+
     print "Scanning for matching revisions..."
-    needsRebase = FindBranchesThatRequireRebasing(dictDeps)
-    needsRebase = ResolveRebaseDependencies(dictDeps, needsRebase)
+    needsRebase = FindBranchesThatRequireRebasing(deps)
+
+    # Put together a list of branches that need rebasing, in the order they need it
+    needsRebase = ResolveRebaseDependencies(revdeps, needsRebase, sortedDeps)
     
     print "Branches that require rebasing:"
     for branch in needsRebase:
@@ -160,7 +176,7 @@ def ResolveStackedBranches():
     for branch in needsRebase:
         print "Performing rebase %s of %s..." % (count, len(needsRebase))
     
-        source = dictDeps[branch]
+        source = deps[branch]
         target = branch
     
         print "Changing to branch %s..." % target
@@ -189,3 +205,15 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+"""
+This caueses a need for more than one iteration for some reason.  Find out why.
+
+FOLLOW-AAA-Fiddling-JS-follows-master
+FOLLOW-DB-TC-13204-reports-threatintel-volume-tr-rebased-follows-master
+FOLLOW-TC-11105-EmptyCharts-on-master-tr-follows-master
+FOLLOW-TC-11105-EmptyCharts-tr-follows-tr-temp-timeline-rebased
+FOLLOW-TC-13239-questionable-db-update-tr-follows-master
+FOLLOW-TC-13302-little-bits-of-pie-tr-follows-master
+FOLLOW-tr-temp-timeline-rebased-follows-DB-TC-13204-reports-threatintel-volume-tr-rebased
+"""
