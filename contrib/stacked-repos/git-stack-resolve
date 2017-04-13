@@ -105,7 +105,21 @@ def FindBranchesThatRequireRebasing(dictDeps):
         # Find out if we need to rebase
         ret = run('git rev-list %s..%s' % (target, source))
         if ret['rc'] != 0:
+            tag = "FOLLOW-%s-follows-%s" % (target, source)
             print "git rev-list failed for range %s..%s" % (target, source)
+            print "Possibly target or source branch no longer exists for %s" % (tag)
+            ret1 = run('git branch |grep -w "%s"' % (target))
+            ret2 = run('git branch |grep -w "%s"' % (source))
+            if ret1['rc'] != 0:
+                print "  ...attempted to find branch %s, but could not locate it." % (target)
+            else:
+                print "  ...located branch: %s" % (target)
+            if ret2['rc'] != 0:
+                print "  ...attempted to find branch %s, but could not locate it." % (source)
+            else:
+                print "  ...located branch: %s" % (source)
+            print "Tag: %s" % (tag)
+
             sys.exit(1)
         revs = ret['sout'].split('\n')
 
